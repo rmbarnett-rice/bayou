@@ -122,25 +122,49 @@ def _generate_asts(evidence_json, predictor):
     #
     # Generate ASTs from evidence.
     #
-    asts, counts = [], []
+    # Perform up to 100 inference operations from evidence. Track each inferred ast by the number of times it has
+    # been returned by the inference operation. If the most inferred ast has ever been seen 10 more times than
+    # the second most inferred ast, stop inferring asts.
+    #
+    asts, counts = [], [] # a list of inferred asts and the number of times each has been inferred (by common index)
+                          # in descending order number of times inferred.
     for i in range(100):
         try:
             ast = predictor.infer(js)
             ast['calls'] = list(set(predictor.calls_in_last_ast))
 
-            if ast in asts:
-                counts[asts.index(ast)] += 1
-            else:
+            if ast in asts: # if we have seen this ast before, increment its count
+
+                index = asts.index(ast)
+                counts[index] += 1
+
+                if index != 0 and counts[index] > counts[index-1]: # adjust to preserve sorted order if needed
+                    asts[index], asts[index-1] = asts[index-1], asts[index]
+                    counts[index], counts[index-1] = counts[index-1], counts[index]
+
+            else: # new ast observed, make a new entry for it
                 asts.append(ast)
                 counts.append(1)
+
+            #
+            # If the count gap between most observed and 2nd most observed grows to 10, stop further inference
+            #
+            if len(counts) > 2 and (counts[0] - counts[1] >= 10):
+                break;
+
         except AssertionError as e:
             logging.debug("AssertionError: " + str(e))
             continue
 
-    for ast, count in zip(asts, counts):
-        ast['count'] = count
-    asts.sort(key=lambda x: x['count'], reverse=True)
+    #
+    # Update the asts with their counts.
+    #
+    for i in range(len(asts)):
+        asts[i]['count'] = counts[i]
 
+    #
+    # Return the top 10 ok asts.
+    #
     asts = [ast for ast in asts[:10] if okay(js, ast)]
     logging.debug("exiting")
     return json.dumps({'evidences': js, 'asts': asts}, indent=2)
